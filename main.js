@@ -2,8 +2,17 @@ const { app, BrowserWindow, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('max-gum-fps', '999'); 
+
 let mainWindow;
 let splash;
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'custom', privileges: { standard: true, secure: true, bypassCSP: true } }
+]);
+
 
 function createSplash() {
   splash = new BrowserWindow({
@@ -48,32 +57,10 @@ function createMainWindow() {
     app.quit();
   });
 
-  setupSkinSwapper();
+  setupSkinSwapper(); 
 }
 
 function setupSkinSwapper() {
-  //console.log('Skin swapper initialized.');
-
-  protocol.handle('custom', async (request) => {
-  const relativePath = request.url.slice(7); 
-  const localPath = path.join(__dirname, 'swap', relativePath);
-
-  try {
-    const fileData = await fs.promises.readFile(localPath);
-    const ext = path.extname(localPath).toLowerCase();
-    let contentType = 'application/octet-stream';
-
-    if (ext === '.webp') contentType = 'image/webp';
-
-    return new Response(fileData, {
-      headers: { 'Content-Type': contentType },
-    });
-  } catch (err) {
-    console.error(`[swap] Could not read file: ${localPath}`, err);
-    return new Response('Not Found', { status: 404 });
-  }
-});
-
 
   const resourceFilter = {
     urls: [
@@ -93,28 +80,47 @@ function setupSkinSwapper() {
     resourceFilter,
     (details, callback) => {
       try {
-        const localFile = path.join(__dirname, 'swap', new URL(details.url).pathname);
+        const pathname = new URL(details.url).pathname; 
+        const localFile = path.join(__dirname, 'swap', pathname);
+        
         if (fs.existsSync(localFile)) {
-          const redirectURL = `custom://${new URL(details.url).pathname}`;
+          const redirectURL = `custom://${pathname}`;
           console.log(`[swap] Redirecting ${details.url} → ${redirectURL}`);
           return callback({ redirectURL });
         }
       } catch (e) {
         console.error('[swap] onBeforeRequest ERROR:', e);
       }
-      callback({ cancel: false });
+      return callback({ cancel: false });
     }
   );
 }
 
-app.whenReady().then(() => {
-  createSplash();
 
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createSplash();
+app.whenReady().then(() => {
+  protocol.registerFileProtocol('custom', (request, callback) => {
+    const url = decodeURIComponent(request.url.substr(9)); 
+    const filePath = path.normalize(path.join(__dirname, 'swap', url));
+    
+    if (fs.existsSync(filePath)) {
+      callback({ path: filePath });
+    } else {
+      console.error(`[swap] File not found for: ${filePath}`);
+      callback({ error: -6 }); 
+    }
   });
+  
+  createSplash();
 });
 
-app.on('window-all-closed', function () {
-  if (process.platform !== 'darwin') app.quit();
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createSplash();
+  }
 });
